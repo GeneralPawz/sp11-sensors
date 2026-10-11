@@ -1,3 +1,6 @@
 # Surface Pro 11: also use the SSC accelerometer (iio-sensor-proxy enables only light and compass on
 # the ADSP by default, because of a proximity-sensor hang on some phones, libssc issue #98).
 SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp*", ENV{IIO_SENSOR_PROXY_TYPE}+="ssc-accel"
+# The firmware reports no mount matrix and libssc's axes point the opposite way to iio-sensor-proxy's
+# for X and Y (upright reads y = +g). Rotate 180 degrees about Z.
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp*", ENV{ACCEL_MOUNT_MATRIX}="-1, 0, 0; 0, -1, 0; 0, 0, 1"

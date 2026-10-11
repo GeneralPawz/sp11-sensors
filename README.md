@@ -18,7 +18,8 @@ input buffers and the write methods of the file service: branch
 |---|---|
 | `sp11-sensors-config` | Installs Microsoft's sensor configuration (driver package `surfacepro_snscfgcrd8380`) to `/usr/share/qcom/x1p64100/Microsoft/denali`. Downloaded from the WOA-Project driver repository, or `--from` a Windows driver copy. The files are not redistributed here. |
 | `sp11-sensors.service` | Runs `hexagonrpcd -s -P /var/lib/sp11-sensors/persist` for the ADSP sensor domain |
-| `81-sp11-sensors.rules` | Enables the SSC accelerometer in iio-sensor-proxy (off by default upstream) |
+| `81-sp11-sensors.rules` | Enables the SSC accelerometer in iio-sensor-proxy (off by default upstream) and sets its mount matrix |
+| `sp11-autorotate` + `sp11-autorotate.service` | User service for Hyprland: rotates the internal screen, touchscreen and pen with the orientation. `touch ~/.config/sp11-autorotate/disabled` keeps the screen as it is |
 
 Details that matter on this device:
 

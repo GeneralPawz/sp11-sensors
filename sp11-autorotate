@@ -1,0 +1,46 @@
+#!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Rotates the internal screen, touchscreen and pen input with the accelerometer, for Hyprland.
+# Follows iio-sensor-proxy's orientation through monitor-sensor. Runs in the graphical session
+# (sp11-autorotate.service, a user unit); the session's polkit rules allow claiming the sensor.
+#
+#   SP11_AUTOROTATE_OUTPUT   monitor to rotate (default: eDP-1)
+#   ~/.config/sp11-autorotate/disabled   if this file exists, keep the screen as it is
+set -uo pipefail
+
+output=${SP11_AUTOROTATE_OUTPUT:-eDP-1}
+disabled=${XDG_CONFIG_HOME:-$HOME/.config}/sp11-autorotate/disabled
+
+transform_for() {
+  case $1 in
+    normal) echo 0 ;;
+    left-up) echo 1 ;;
+    bottom-up) echo 2 ;;
+    right-up) echo 3 ;;
+    *) return 1 ;;
+  esac
+}
+
+apply() {
+  local t=$1 scale
+  scale=$(hyprctl monitors -j | jq -r --arg o "$output" '.[] | select(.name == $o) | .scale')
+  [[ -n $scale ]] || return 0   # monitor not present (e.g. closed lid with an external display)
+  hyprctl eval "hl.monitor({ output = \"$output\", mode = \"preferred\", position = \"auto\", scale = $scale, transform = $t })" >/dev/null
+  hyprctl eval "hl.config({ input = { touchdevice = { transform = $t, output = \"$output\" }, tablet = { transform = $t, output = \"$output\" } } })" >/dev/null
+}
+
+current=""
+monitor-sensor --accel 2>/dev/null | while read -r line; do
+  case $line in
+    *"Accelerometer orientation changed:"*|*"Has accelerometer (orientation:"*)
+      orientation=${line##*: }
+      orientation=${orientation%%,*}
+      orientation=${orientation%%)*}
+      t=$(transform_for "$orientation") || continue
+      [[ -e $disabled ]] && continue
+      [[ $t == "$current" ]] && continue
+      apply "$t" && current=$t
+      ;;
+  esac
+done

@@ -1,0 +1,13 @@
+[Unit]
+Description=Surface Pro 11: rotate the screen and touch input with the accelerometer
+Documentation=https://github.com/GeneralPawz/sp11-sensors
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/sp11-autorotate
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
