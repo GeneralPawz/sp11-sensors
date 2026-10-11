@@ -1,0 +1,83 @@
+#!/bin/bash
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Installs the Surface Pro 11 sensor configuration that the ADSP sensor firmware reads through
+# hexagonrpcd. The files are Microsoft's (Windows driver package surfacepro_snscfgcrd8380) and
+# can't be redistributed, so this fetches them, the same way sp11-grab-fw fetches the firmware:
+#
+#   sp11-sensors-config                  download from the WOA-Project driver repository
+#   sp11-sensors-config --from DIR       use a Windows driver copy (DriverStore/FileRepository, the
+#                                        package folder itself, or an extracted .cab)
+#   sp11-sensors-config --reset          also clear the registry the firmware built, so it rebuilds it
+set -euo pipefail
+
+GITHUB_REPO=WOA-Project/Qualcomm-Reference-Drivers
+DEVICE=Surface/8380_DEN
+CAB=surfacepro_snscfgcrd8380.cab
+# hexagonrpcd looks for /usr/share/qcom/<first qcom,* compatible>/<model vendor>/<codename>
+DEST=/usr/share/qcom/x1p64100/Microsoft/denali   # X1P, LCD
+OLED=/usr/share/qcom/x1e80100/Microsoft/denali   # X1E, OLED: same configuration
+PERSIST=/var/lib/sp11-sensors/persist
+
+die() { echo "error: $*" >&2; exit 1; }
+(( EUID == 0 )) || die "run as root"
+
+from=""; reset=0
+while (( $# )); do
+  case $1 in
+    --from) from=${2:?--from needs a directory}; shift ;;
+    --reset) reset=1 ;;
+    -h|--help) sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+  shift
+done
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+if [[ -n $from ]]; then
+  src=$(find "$from" -maxdepth 2 -type f -name json.lst -path '*snscfg*' -printf '%h\n' 2>/dev/null | head -1)
+  [[ -n $src ]] || src=$(find "$from" -maxdepth 1 -type f -name json.lst -printf '%h\n' | head -1)
+  [[ -n $src ]] || die "no sensor configuration (json.lst) found in $from"
+else
+  latest=$(curl -fsSL "https://api.github.com/repos/$GITHUB_REPO/contents/$DEVICE" \
+    | jq -r '.[] | select(.type == "dir") | .name' | sort -t . -k1,1n -k2,2n -k3,3n -k4,4n | tail -n 1)
+  [[ -n $latest ]] || die "could not list $GITHUB_REPO/$DEVICE"
+  echo "Downloading $CAB from driver set $latest"
+  curl -fsSL -o "$tmp/$CAB" "https://raw.githubusercontent.com/$GITHUB_REPO/master/$DEVICE/$latest/$CAB"
+  mkdir "$tmp/cab"
+  cabextract -q -d "$tmp/cab" "$tmp/$CAB" 2>/dev/null || true
+  [[ -f $tmp/cab/json.lst ]] || die "$CAB did not contain json.lst"
+  src=$tmp/cab
+fi
+echo "Configuration: $src"
+
+# Windows files use CRLF; the firmware reads paths from sns_reg_config and json.lst line by line
+# and would keep the \r (e.g. ".../registry\r"), so convert those to LF.
+new=$tmp/denali
+mkdir -p "$new/sensors/config" "$new/socinfo"
+cp "$src"/*.json "$new/sensors/config/"
+cp "$src"/*.bin "$new/sensors/config/" 2>/dev/null || true
+tr -d '\r' <"$src/json.lst" >"$new/sensors/config/json.lst"
+tr -d '\r' <"$src/sns_reg_config" >"$new/sensors/sns_reg.conf"
+# What the firmware sees as /sys/devices/soc0: Windows' values, which select the CRD configurations
+for f in hw_platform soc_id platform_subtype platform_subtype_id platform_version revision; do
+  [[ -f $src/$f ]] && tr -d '\r' <"$src/$f" >"$new/socinfo/$f"
+done
+
+install -d "$(dirname "$DEST")" "$(dirname "$OLED")"
+rm -rf "$DEST.old"
+[[ -d $DEST ]] && mv "$DEST" "$DEST.old"
+cp -r "$new" "$DEST"
+chmod -R a+rX "$DEST"
+rm -rf "$DEST.old"
+ln -sfn "$DEST" "$OLED"
+echo "Installed $(ls "$DEST/sensors/config" | wc -l) files to $DEST (and $OLED)"
+
+if (( reset )); then
+  rm -rf "${PERSIST:?}/sensors"
+  install -d "$PERSIST/sensors/registry/registry"
+  echo "Cleared the firmware's registry in $PERSIST; it rebuilds on the next start"
+fi
+echo "Restart the sensor service to use it: systemctl restart sp11-sensors.service"

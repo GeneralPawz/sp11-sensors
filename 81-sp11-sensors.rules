@@ -1,0 +1,3 @@
+# Surface Pro 11: also use the SSC accelerometer (iio-sensor-proxy enables only light and compass on
+# the ADSP by default, because of a proximity-sensor hang on some phones, libssc issue #98).
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp*", ENV{IIO_SENSOR_PROXY_TYPE}+="ssc-accel"

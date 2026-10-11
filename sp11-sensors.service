@@ -1,0 +1,19 @@
+[Unit]
+Description=Surface Pro 11 sensors: file server for the ADSP sensor firmware (hexagonrpcd)
+Documentation=https://github.com/GeneralPawz/sp11-sensors
+ConditionPathExists=/dev/fastrpc-adsp
+ConditionPathExists=/usr/share/qcom/x1p64100/Microsoft/denali/sensors/sns_reg.conf
+Before=iio-sensor-proxy.service
+# Same as upstream's sensorspd unit: the FastRPC session doesn't survive suspend
+Conflicts=suspend.target
+Before=suspend.target
+
+[Service]
+# -P: the firmware builds its own registry there (needs hexagonrpcd with writable persist support)
+ExecStart=/usr/bin/hexagonrpcd -f /dev/fastrpc-adsp -d adsp -s -P /var/lib/sp11-sensors/persist
+StateDirectory=sp11-sensors/persist/sensors/registry/registry
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
