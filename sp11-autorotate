@@ -30,17 +30,38 @@ apply() {
   hyprctl eval "hl.config({ input = { touchdevice = { transform = $t, output = \"$output\" }, tablet = { transform = $t, output = \"$output\" } } })" >/dev/null
 }
 
+# iio-sensor-proxy only enables the accelerometer for a claim that arrives after the driver has
+# probed; monitor-sensor claims the moment the proxy appears on the bus, which can be earlier (e.g.
+# when the proxy restarts), and then no orientation ever arrives. So wait until the proxy reports
+# the accelerometer before claiming, and start over whenever the proxy goes away.
+has_accelerometer() {
+  gdbus call --system --dest net.hadess.SensorProxy --object-path /net/hadess/SensorProxy \
+    --method org.freedesktop.DBus.Properties.Get net.hadess.SensorProxy HasAccelerometer 2>/dev/null \
+    | grep -q true
+}
+
 current=""
-monitor-sensor --accel 2>/dev/null | while read -r line; do
-  case $line in
-    *"Accelerometer orientation changed:"*|*"Has accelerometer (orientation:"*)
-      orientation=${line##*: }
-      orientation=${orientation%%,*}
-      orientation=${orientation%%)*}
-      t=$(transform_for "$orientation") || continue
-      [[ -e $disabled ]] && continue
-      [[ $t == "$current" ]] && continue
-      apply "$t" && current=$t
-      ;;
-  esac
+while true; do
+  until has_accelerometer; do sleep 2; done
+
+  coproc sensor { exec monitor-sensor --accel 2>/dev/null; }
+  while read -r line <&"${sensor[0]}"; do
+    case $line in
+      *"iio-sensor-proxy vanished"*)
+        break
+        ;;
+      *"Accelerometer orientation changed:"*|*"Has accelerometer (orientation:"*)
+        orientation=${line##*: }
+        orientation=${orientation%%,*}
+        orientation=${orientation%%)*}
+        t=$(transform_for "$orientation") || continue
+        [[ -e $disabled ]] && continue
+        [[ $t == "$current" ]] && continue
+        apply "$t" && current=$t
+        ;;
+    esac
+  done
+  kill "$sensor_PID" 2>/dev/null
+  wait "$sensor_PID" 2>/dev/null
+  sleep 2
 done
