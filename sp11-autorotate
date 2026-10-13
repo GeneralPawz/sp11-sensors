@@ -27,10 +27,12 @@ transform_for() {
 }
 
 apply() {
-  local t=$1 scale
-  scale=$(hyprctl monitors -j | jq -r --arg o "$output" '.[] | select(.name == $o) | .scale')
+  local t=$1 mode pos scale
+  # Keep the current mode and position (the user's layout, the battery refresh rate); only rotate.
+  read -r mode pos scale < <(hyprctl monitors -j | jq -r --arg o "$output" '.[] | select(.name == $o) |
+    "\(.width)x\(.height)@\(.refreshRate) \(.x)x\(.y) \(.scale)"')
   [[ -n $scale ]] || return 0   # monitor not present (e.g. closed lid with an external display)
-  hyprctl eval "hl.monitor({ output = \"$output\", mode = \"preferred\", position = \"auto\", scale = $scale, transform = $t })" >/dev/null
+  hyprctl eval "hl.monitor({ output = \"$output\", mode = \"$mode\", position = \"$pos\", scale = $scale, transform = $t })" >/dev/null
   hyprctl eval "hl.config({ input = { touchdevice = { transform = $t, output = \"$output\" }, tablet = { transform = $t, output = \"$output\" } } })" >/dev/null
 }
 
