@@ -6,11 +6,15 @@
 # (sp11-autorotate.service, a user unit); the session's polkit rules allow claiming the sensor.
 #
 #   SP11_AUTOROTATE_OUTPUT   monitor to rotate (default: eDP-1)
-#   ~/.config/sp11-autorotate/disabled   if this file exists, keep the screen as it is
+#   ~/.config/sp11-autorotate/disabled   rotation lock: while this file exists, keep the screen as it
+#                                        is and release the accelerometer, so iio-sensor-proxy stops
+#                                        the ADSP sensor stream (~5 wakeups/s while claimed)
 set -uo pipefail
 
 output=${SP11_AUTOROTATE_OUTPUT:-eDP-1}
-disabled=${XDG_CONFIG_HOME:-$HOME/.config}/sp11-autorotate/disabled
+cfgdir=${XDG_CONFIG_HOME:-$HOME/.config}/sp11-autorotate
+disabled=$cfgdir/disabled
+mkdir -p "$cfgdir"
 
 transform_for() {
   case $1 in
@@ -40,11 +44,27 @@ has_accelerometer() {
     | grep -q true
 }
 
+# Waits for the lock file to change ($1: create or delete); the timeout is only a backstop.
+wait_flag() {
+  local ev=(-e create -e moved_to)
+  [[ $1 == delete ]] && ev=(-e delete -e moved_from)
+  inotifywait -qq -t 60 "${ev[@]}" --include '/disabled$' "$cfgdir" 2>/dev/null
+}
+
 current=""
 while true; do
-  until has_accelerometer; do sleep 2; done
+  if [[ -e $disabled ]]; then
+    while [[ -e $disabled ]]; do wait_flag delete; done
+    current=""   # someone else may have rotated the screen meanwhile; follow the sensor again
+  fi
+  until has_accelerometer; do sleep 2; [[ -e $disabled ]] && continue 2; done
 
   coproc sensor { exec monitor-sensor --accel 2>/dev/null; }
+  sensor_pid=$sensor_PID   # bash unsets sensor_PID once the coproc exits
+  # Locking ends monitor-sensor, which drops the claim; the loop below then sees EOF.
+  ( until [[ -e $disabled ]]; do wait_flag create; done; kill "$sensor_pid" 2>/dev/null ) &
+  watcher=$!
+  [[ -e $disabled ]] && kill "$sensor_pid" 2>/dev/null
   while read -r line <&"${sensor[0]}"; do
     case $line in
       *"iio-sensor-proxy vanished"*)
@@ -61,7 +81,8 @@ while true; do
         ;;
     esac
   done
-  kill "$sensor_PID" 2>/dev/null
-  wait "$sensor_PID" 2>/dev/null
-  sleep 2
+  pkill -P "$watcher" -x inotifywait 2>/dev/null; kill "$watcher" 2>/dev/null
+  kill "$sensor_pid" 2>/dev/null
+  wait "$sensor_pid" "$watcher" 2>/dev/null
+  [[ -e $disabled ]] || sleep 2
 done
